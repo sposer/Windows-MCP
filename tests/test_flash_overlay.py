@@ -108,33 +108,43 @@ class TestCancelActiveFlash:
         assert flash_overlay._active_overlay is None
 
 
-class TestBuildStripDefs:
-    def test_region_layer_zero_sits_on_rect_edge_with_full_alpha(self):
-        defs = flash_overlay._build_strip_defs([(100, 200, 500, 400)], full_screen=False)
-        # First strip stack is layer 0 (full alpha); 4 strips per layer.
-        layer0 = [d for d in defs if d[4] == 1.0]
-        assert len(layer0) == 4
-        # Layer 0 is offset outward by 1 * _LAYER_THICKNESS so the inner edge
-        # of the strip aligns with the rect edge.
-        thickness = flash_overlay._LAYER_THICKNESS
-        top, bottom, left, right = layer0
-        assert top == (100 - thickness, 200 - thickness, 500 + thickness, 200, 1.0)
-        assert bottom == (100 - thickness, 400, 500 + thickness, 400 + thickness, 1.0)
+class TestIntensityCurve:
+    def test_full_screen_is_bell_curve(self):
+        # Symmetric peak at t=0.5, zero at t=0 and t=1
+        assert flash_overlay._intensity_at(0.0, full_screen=True) == 0.0
+        assert flash_overlay._intensity_at(0.5, full_screen=True) == 1.0
+        assert abs(flash_overlay._intensity_at(1.0, full_screen=True)) < 1e-9
 
-    def test_full_screen_strips_inset_inward_from_edge(self):
-        defs = flash_overlay._build_strip_defs([(0, 0, 1000, 800)], full_screen=True)
-        layer0 = [d for d in defs if d[4] == 1.0]
-        assert len(layer0) == 4
-        inset = flash_overlay._FULLSCREEN_INSET
-        thickness = flash_overlay._LAYER_THICKNESS
-        # Top strip: y range is [inset, inset+thickness]
-        top = next(d for d in layer0 if d[3] - d[1] == thickness and d[2] - d[0] > thickness)
-        assert top[1] == inset
-        assert top[3] == inset + thickness
+    def test_region_holds_then_fades(self):
+        # Pre-peak fade-in
+        assert flash_overlay._intensity_at(0.0, full_screen=False) == 0.0
+        # Held at peak in the middle
+        assert flash_overlay._intensity_at(0.4, full_screen=False) == 1.0
+        # Fading in last segment
+        assert flash_overlay._intensity_at(1.0, full_screen=False) == 0.0
 
-    def test_too_small_full_screen_rect_produces_no_strips(self):
-        defs = flash_overlay._build_strip_defs([(0, 0, 4, 4)], full_screen=True)
-        assert defs == []
+
+class TestPremultipliedBgra:
+    def test_full_intensity_premultiplies_color_by_alpha(self):
+        from PIL import Image
+
+        # 1×1 pixel: orange-red 50% alpha → premult should be (R*128/255, G*128/255, B*128/255, 128) in BGRA order
+        img = Image.new("RGBA", (1, 1), (255, 69, 0, 128))
+        out = flash_overlay._premultiplied_bgra(img, 1.0)
+        b, g, r, a = out
+        assert a == 128
+        assert b == 0
+        assert g == (69 * 128) // 255
+        assert r == (255 * 128) // 255
+
+    def test_intensity_scales_alpha(self):
+        from PIL import Image
+
+        img = Image.new("RGBA", (1, 1), (255, 69, 0, 255))
+        out = flash_overlay._premultiplied_bgra(img, 0.5)
+        # Alpha was 255; intensity 0.5 → effective alpha ≈ 127.
+        _, _, _, a = out
+        assert 124 <= a <= 128
 
 
 class TestRunOverlayFallthrough:
