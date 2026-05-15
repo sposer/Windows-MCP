@@ -26,7 +26,6 @@
 mcp-name: io.github.CursorTouch/Windows-MCP
 
 ## Updates
-- Added VM support for Windows-MCP. Check (windowsmcp.io)[https://windowsmcp.io/] for more details.
 - Windows-MCP reached `2M+ Users` in [Claude Desktop Extensiosn](https://claude.ai/directory). 
 - Try out [🪟Windows-Use](https://pypi.org/project/windows-use/), an agent built using Windows-MCP.
 - Windows-MCP is now available on [PyPI](https://pypi.org/project/windows-mcp/) (thus supports `uvx windows-mcp`)
@@ -63,7 +62,7 @@ mcp-name: io.github.CursorTouch/Windows-MCP
   Easily adapt or extend tools to suit your unique automation or AI integration needs.
 
 - **Real-Time Interaction**  
-  Typical latency between actions (e.g., from one mouse click to the next) ranges from **0.2 to 0.9 secs**, and may slightly vary based on the number of active applications and system load, also the inferencing speed of the llm.
+  Typical latency between actions (e.g., from one mouse click to the next) ranges from **0.2 to 0.5 secs**, and may slightly vary based on the number of active applications and system load, also the inferencing speed of the llm.
 
 - **DOM Mode for Browser Automation**  
   Special `use_dom=True` mode for State-Tool that focuses exclusively on web page content, filtering out browser UI elements for cleaner, more efficient web automation.
@@ -77,6 +76,30 @@ mcp-name: io.github.CursorTouch/Windows-MCP
 - Python 3.13+
 - UV (Package Manager) from Astra, install with `pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - `English` as the default language in Windows preferred else disable the `App-Tool` in the MCP Server for Windows with other languages.
+
+### Run at Login
+
+Run the server directly when needed:
+
+```shell
+uvx windows-mcp
+uvx windows-mcp --transport sse --host localhost --port 8000
+uvx windows-mcp --transport streamable-http --host localhost --port 8000
+```
+
+Install it as a background task that starts now and at every login:
+
+```shell
+windows-mcp install
+
+# Or choose the HTTP transport and bind address explicitly
+windows-mcp install --transport sse --host 127.0.0.1 --port 8000
+```
+
+This creates a per-user Scheduled Task named `windows-mcp-server` and a wrapper script at
+`~/.windows-mcp/start-server.cmd`. Use `windows-mcp uninstall` to remove it. Logs are written
+to `~/.windows-mcp/server.log` and `~/.windows-mcp/server.error.log`.
+
 <details>
   <summary>Install in Claude Desktop</summary>
 
@@ -425,6 +448,19 @@ uvx windows-mcp --transport streamable-http --host localhost --port 8000
 
 Optional environment variables can be set to customize behavior — see [Environment Variables](#-environment-variables) below.
 
+### Security for Remote Access
+
+For network access, enable authentication and TLS:
+
+```shell
+windows-mcp --transport sse --host 0.0.0.0 \
+  --auth-key "your_secret_token" \
+  --ip-allowlist "203.0.113.0/24" \
+  --ssl-certfile cert.pem --ssl-keyfile key.pem
+```
+
+See [🔐 Security & Access Control](#-security--access-control) for all options.
+
 ### Transport Options
 
 | Transport | Flag | Use Case |
@@ -432,6 +468,154 @@ Optional environment variables can be set to customize behavior — see [Environ
 | `stdio` (default) | `--transport stdio` | Direct connection from MCP clients like Claude Desktop, Cursor, etc. |
 | `sse` | `--transport sse --host HOST --port PORT` | Network-accessible via Server-Sent Events |
 | `streamable-http` | `--transport streamable-http --host HOST --port PORT` | Network-accessible via HTTP streaming (recommended for production) |
+
+---
+
+## 🔐 Security & Access Control
+
+### Authentication
+```shell
+windows-mcp --transport sse --host 0.0.0.0 --auth-key "your_token"
+```
+Requires `Authorization: Bearer your_token` header on all requests.
+
+### IP Allowlist
+```shell
+windows-mcp --auth-key "token" --ip-allowlist "203.0.113.0/24,198.51.100.5"
+```
+Restricts connections to specified CIDR ranges. Blocks private/loopback IPs by default.
+
+### CORS Origins
+
+By default, **no CORS headers are emitted**. Browsers block cross-origin requests via their own Same-Origin Policy, which means arbitrary websites cannot reach the MCP control plane even if the server is on `localhost`. Host-header validation (DNS rebinding protection) is also applied automatically based on the bind address.
+
+If you need a browser-based MCP client to reach the server, opt in with an explicit origin allowlist:
+
+```shell
+windows-mcp --cors-origins "https://my-client.example.com,https://other.example.com"
+```
+
+Only the listed origins receive `Access-Control-Allow-Origin` headers; all other cross-origin requests are rejected by the browser. The equivalent environment variable is `WINDOWS_MCP_CORS_ORIGINS`.
+
+### Tool Selection
+All tools are enabled by default. Use `--tools` to whitelist specific tools, or `--exclude-tools` to block specific ones.
+
+```shell
+windows-mcp --tools "Screenshot,Click,Snapshot"   # Enable only these tools
+windows-mcp --exclude-tools "PowerShell,Registry" # Disable specific tools
+```
+
+### TLS/HTTPS
+```shell
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+
+windows-mcp --ssl-certfile cert.pem --ssl-keyfile key.pem
+```
+
+### OAuth 2.0 + PKCE
+
+For MCP clients that use OAuth (e.g. Claude Desktop) instead of a static API key:
+
+```shell
+windows-mcp --transport streamable-http --host 0.0.0.0 \
+  --ssl-certfile ~/.windows-mcp/cert.pem \
+  --ssl-keyfile  ~/.windows-mcp/key.pem \
+  --oauth-client-id my-client \
+  --oauth-client-secret my-secret
+```
+
+**Claude Desktop config:**
+```json
+{
+  "mcpServers": {
+    "windows-mcp": {
+      "type": "http",
+      "url": "https://<host>:8000/mcp/",
+      "oauth": {
+        "clientId": "my-client",
+        "clientSecret": "my-secret"
+      }
+    }
+  }
+}
+```
+
+The OAuth server exposes:
+- `GET /.well-known/oauth-authorization-server` — server metadata (RFC 8414)
+- `GET /oauth/authorize` — Authorization Code + PKCE (`S256` required)
+- `POST /oauth/token` — token exchange (client secret required)
+- `POST /oauth/register` — disabled; clients must be pre-provisioned
+
+Dynamic client registration is disabled. Redirect URIs must be loopback `http(s)` only.
+Auth key and OAuth can coexist — both are accepted as valid Bearer tokens.
+
+### Config File (`~/.windows-mcp/config.toml`)
+
+Instead of passing flags every time, store your configuration in `~/.windows-mcp/config.toml`. CLI flags always override config file values.
+
+**Search order:**
+1. `--config /path/to/config.toml`
+2. `~/.windows-mcp/config.toml`
+
+**stdio** — local only, no security needed:
+```toml
+[server]
+transport = "stdio"
+```
+
+**SSE** — network access with auth and IP restriction:
+```toml
+[server]
+transport = "sse"
+host      = "0.0.0.0"
+port      = 8000
+auth_key  = "your-secret-key"
+
+[security]
+ip_allowlist = ["192.168.1.0/24"]
+```
+
+**Streamable HTTP** — with auth, TLS, and tool exclusions:
+```toml
+[server]
+transport    = "streamable-http"
+host         = "0.0.0.0"
+port         = 8000
+auth_key     = "your-secret-key"
+ssl_certfile = "cert.pem"   # resolved relative to ~/.windows-mcp/
+ssl_keyfile  = "key.pem"
+
+[security]
+ip_allowlist        = ["192.168.1.0/24"]
+cors_origins        = ["https://my-client.example.com"]   # optional — browser CORS opt-in
+oauth_client_id     = "my-client"      # optional — enables OAuth 2.0 + PKCE
+oauth_client_secret = "my-secret"
+
+[tools]
+exclude = ["PowerShell", "Registry"]   # disable specific tools
+```
+
+Place cert and key files in the same directory:
+
+```
+~/.windows-mcp/
+├── config.toml
+├── cert.pem
+└── key.pem
+```
+
+Generate a self-signed cert directly into that directory:
+
+```shell
+mkdir -p ~/.windows-mcp
+openssl req -x509 -newkey rsa:4096 \
+  -keyout ~/.windows-mcp/key.pem \
+  -out ~/.windows-mcp/cert.pem \
+  -days 365 -nodes
+```
+
+### SSRF Protection
+`Scrape` tool blocks: private IPs, loopback, link-local, credentials-in-URLs, non-HTTP schemes.
 
 ---
 
@@ -448,6 +632,18 @@ All variables are optional unless noted. Set them via the `env` key in `claude_d
 | `WINDOWS_MCP_PROFILE_SNAPSHOT` | _(disabled)_ | Set to `1`, `true`, `yes`, or `on` to emit per-stage timing logs for Screenshot/Snapshot calls. Useful for diagnosing slow captures. |
 | `WINDOWS_MCP_DISABLE_FLASH` | _(disabled)_ | Set to `1`, `true`, `yes`, or `on` to suppress the orange-red glowing border that briefly highlights the captured area after every screenshot. The flash is rendered on a transparent always-on-top window *after* capture so it never appears in the captured image. |
 
+### Security
+
+| Variable | Default | Description |
+|---|---|---|
+| `WINDOWS_MCP_AUTH_KEY` | _(none)_ | Bearer token required on all HTTP requests. Alternative to `--auth-key` CLI flag. |
+| `WINDOWS_MCP_IP_ALLOWLIST` | _(none)_ | Comma-separated list of allowed client IPs or CIDR ranges (e.g., `203.0.113.0/24,198.51.100.5`). Alternative to `--ip-allowlist` CLI flag. |
+| `WINDOWS_MCP_CORS_ORIGINS` | _(none)_ | Comma-separated list of origins permitted to make cross-origin browser requests (e.g., `https://my-client.example.com`). No CORS headers are emitted when unset. Alternative to `--cors-origins` CLI flag. |
+| `WINDOWS_MCP_TOOLS` | _(all enabled)_ | Comma-separated explicit list of tools to enable (e.g., `Screenshot,Click,Snapshot`). Alternative to `--tools` CLI flag. |
+| `WINDOWS_MCP_EXCLUDE_TOOLS` | _(none)_ | Comma-separated list of tools to disable (e.g., `PowerShell,Registry`). Alternative to `--exclude-tools` CLI flag. |
+| `WINDOWS_MCP_SSL_CERTFILE` | _(none)_ | Path to TLS certificate file (.pem) for HTTPS. Must be provided with `WINDOWS_MCP_SSL_KEYFILE`. |
+| `WINDOWS_MCP_SSL_KEYFILE` | _(none)_ | Path to TLS private key file (.pem) for HTTPS. Must be provided with `WINDOWS_MCP_SSL_CERTFILE`. |
+
 ### Telemetry
 
 | Variable | Default | Description |
@@ -460,22 +656,33 @@ All variables are optional unless noted. Set them via the `env` key in `claude_d
 |---|---|---|
 | `WINDOWS_MCP_DEBUG` | `false` | Set to `1`, `true`, `yes`, or `on` to enable debug mode, which sets the log level to DEBUG for verbose output. Also available as the `--debug` CLI flag. |
 
-**Example `claude_desktop_config.json` configuration:**
+**Example `claude_desktop_config.json`:**
 
+Local (no security):
 ```json
 {
   "mcpServers": {
     "windows-mcp": {
       "command": "uvx",
-      "args": [
-        "windows-mcp"
-      ],
+      "args": ["windows-mcp"],
+      "env": { "WINDOWS_MCP_SCREENSHOT_SCALE": "0.5" }
+    }
+  }
+}
+```
+
+Remote (with auth + IP allowlist + TLS):
+```json
+{
+  "mcpServers": {
+    "windows-mcp": {
+      "command": "uvx",
+      "args": ["windows-mcp", "--transport", "sse", "--host", "0.0.0.0"],
       "env": {
-        "WINDOWS_MCP_SCREENSHOT_SCALE": "0.5",
-        "WINDOWS_MCP_SCREENSHOT_BACKEND": "auto",
-        "WINDOWS_MCP_PROFILE_SNAPSHOT": "false",
-        "ANONYMIZED_TELEMETRY": "true",
-        "WINDOWS_MCP_DEBUG": "false"
+        "WINDOWS_MCP_AUTH_KEY": "your_token",
+        "WINDOWS_MCP_IP_ALLOWLIST": "203.0.113.0/24",
+        "WINDOWS_MCP_SSL_CERTFILE": "/path/to/cert.pem",
+        "WINDOWS_MCP_SSL_KEYFILE": "/path/to/key.pem"
       }
     }
   }
@@ -506,33 +713,6 @@ MCP Client can access the following tools to interact with Windows:
 - `Notification`: Send a Windows toast notification with a title and message.
 - `Registry`: Read, write, delete, or list Windows Registry values and keys.
 
-### Performance Notes
-
-`MultiSelect` and `MultiEdit` now resolve label-based coordinates in bulk through `Desktop.get_coordinates_from_labels`, which avoids repeated lookups against the desktop tree state.
-
-PR benchmark (mock-based):
-
-- Iterative: `0.003578s`
-- Bulk: `0.002238s`
-- Improvement: `~37.45%`
-
-In a local Windows benchmark with a synthetic tree state and 35,000 label resolutions per run, the measured results were:
-
-- Iterative: `0.005895s`
-- Bulk: `0.002825s`
-- Improvement: `52.09%`
-
-In a local desktop runtime check (live Windows state capture path), the measured averages were:
-
-- FindElement-like (`use_vision=False`, `use_annotation=False`): `0.5507s`
-- Snapshot-like (`use_vision=True`, `use_annotation=True`): `0.6717s`
-- Relative gain for lighter lookup path: `~18.01%`
-
-You can reproduce the comparison with:
-
-```shell
-python scripts/benchmark_multi_coordinates.py
-```
 
 ## 🤝 Connect with Us
 Stay updated and join our community:
@@ -608,8 +788,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 Windows-MCP makes use of several excellent open-source projects that power its Windows automation features:
 
 - [UIAutomation](https://github.com/yinkaisheng/Python-UIAutomation-for-Windows)
-
-- [PyAutoGUI](https://github.com/asweigart/pyautogui)
 
 Huge thanks to the maintainers and contributors of these libraries for their outstanding work and open-source spirit.
 
