@@ -193,6 +193,7 @@ class Desktop:
             stage_started_at = perf_counter()
 
         screenshot_original_size = None
+        applied_scale = None
         if use_vision:
             if use_annotation:
                 nodes = tree_state.interactive_nodes
@@ -224,6 +225,7 @@ class Desktop:
                 )
                 scale = min(scale, scale_width, scale_height)
 
+            applied_scale = scale
             if scale != 1.0:
                 screenshot = screenshot.resize(
                     (int(screenshot.width * scale), int(screenshot.height * scale)),
@@ -250,6 +252,7 @@ class Desktop:
             screenshot=screenshot,
             cursor_position=cursor_position,
             screenshot_original_size=screenshot_original_size,
+            screenshot_scale=applied_scale,
             screenshot_region=screenshot_region,
             screenshot_displays=display_indices,
             tree_state=tree_state,

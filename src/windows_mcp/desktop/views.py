@@ -63,6 +63,7 @@ class DesktopState:
     screenshot: Image | None = None
     cursor_position: tuple[int, int] | None = None
     screenshot_original_size: Size | None = None
+    screenshot_scale: float | None = None
     screenshot_region: BoundingBox | None = None
     screenshot_displays: list[int] | None = None
     screenshot_backend: str | None = None

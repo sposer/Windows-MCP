@@ -156,12 +156,19 @@ def build_snapshot_response(
 
     metadata_text = f"Cursor Position: {desktop_state.cursor_position}\n"
     if desktop_state.screenshot_original_size:
-        metadata_text += (
-            f"Screenshot Original Size: {desktop_state.screenshot_original_size.to_string()}"
-            " (the screenshot may be downscaled; multiply image coordinates by"
-            f" the ratio of original size to displayed size to get actual screen coordinates"
-            " for click, move and other mouse actions)\n"
-        )
+        orig = desktop_state.screenshot_original_size
+        scale = desktop_state.screenshot_scale or 1.0
+        if scale < 1.0:
+            coord_scale = round(1.0 / scale, 6)
+            metadata_text += (
+                f"Screenshot Original Size: {orig.to_string()}\n"
+                f"Screenshot Coordinate Scale: {coord_scale} "
+                f"— image pixels are downscaled; multiply every image pixel coordinate by "
+                f"{coord_scale} before passing to Click, Move, Scroll, or any loc= argument "
+                f"(e.g. image pixel (200, 150) → screen coordinate ({round(200 * coord_scale)}, {round(150 * coord_scale)}))\n"
+            )
+        else:
+            metadata_text += f"Screenshot Size: {orig.to_string()}\n"
     if desktop_state.screenshot_region:
         metadata_text += (
             f"Screenshot Region: {desktop_state.screenshot_region.xyxy_to_string()}\n"
