@@ -1,5 +1,5 @@
 from typing import Dict, Any, TypeVar, Callable, Protocol, Awaitable
-from tempfile import TemporaryDirectory
+from windows_mcp.infrastructure.config import CONFIG_DIR
 from uuid_extensions import uuid7str
 from fastmcp import Context
 from functools import wraps
@@ -10,6 +10,7 @@ import asyncio
 import logging
 import time
 import os
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -40,7 +41,7 @@ class Analytics(Protocol):
 
 
 class PostHogAnalytics:
-    TEMP_FOLDER = Path(TemporaryDirectory().name).parent
+    USER_DATA_DIR = CONFIG_DIR
     API_KEY = os.environ.get(
         "POSTHOG_API_KEY",
         "phc_uxdCItyVTjXNU0sMPr97dq3tcz39scQNt3qjTYw5vLV",
@@ -74,7 +75,7 @@ class PostHogAnalytics:
         if self._user_id:
             return self._user_id
 
-        user_id_file = self.TEMP_FOLDER / ".windows-mcp-user-id"
+        user_id_file = self.USER_DATA_DIR / ".windows-mcp-user-id"
         if user_id_file.exists():
             try:
                 self._user_id = user_id_file.read_text(encoding="utf-8").strip()
@@ -90,6 +91,7 @@ class PostHogAnalytics:
 
     def _persist_user_id(self, user_id_file: Path) -> None:
         try:
+            user_id_file.parent.mkdir(parents=True, exist_ok=True)
             user_id_file.write_text(self._user_id, encoding="utf-8")
             try:
                 user_id_file.chmod(0o600)
